@@ -1,5 +1,4 @@
 package org.example.demo1.aiclassification
-
 import com.intellij.codeInsight.daemon.impl.DaemonCodeAnalyzerImpl
 import com.intellij.codeInsight.daemon.impl.HighlightInfo
 import com.intellij.lang.annotation.HighlightSeverity
@@ -15,10 +14,7 @@ import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.wm.ToolWindowManager
-import com.intellij.psi.PsiDocumentManager
-import com.intellij.psi.PsiFile
-import com.intellij.psi.PsiJavaFile
-import com.intellij.psi.PsiManager
+import com.intellij.psi.*
 import com.intellij.refactoring.suggested.endOffset
 import com.intellij.refactoring.suggested.startOffset
 import org.example.demo1.toolWindow.ClassificationResultPanel
@@ -39,20 +35,20 @@ class AiClassification : AnAction() {
     private var results = mutableListOf<ClassificationResult>()
 
 
-
     override fun actionPerformed(e: AnActionEvent) {
 
+        //clean the attributes at a new scanning
         codesArray.clear()
         codesMethodNames.clear()
         codesArrayStartLocation.clear()
         codesArrayEndLocation.clear()
         results.clear()
 
+        //validations
         val project = e.project ?: run {
             Messages.showErrorDialog("No project found.", "AI Classification Failed")
             return
         }
-
         val file = e.getData(CommonDataKeys.VIRTUAL_FILE) ?: run {
             Messages.showErrorDialog("No file selected.", "AI Classification Failed")
             return
@@ -60,6 +56,11 @@ class AiClassification : AnAction() {
 
         val psiFile = PsiManager.getInstance(project).findFile(file) ?: return
         val document = PsiDocumentManager.getInstance(project).getDocument(psiFile) ?: return
+
+        if (psiFile.fileType.name != "JAVA") {
+            Messages.showErrorDialog("Not a java file.", "AI Classification Failed")
+            return
+        }
 
         if (hasCodeErrors(project, psiFile)) {
             Messages.showErrorDialog(
@@ -71,8 +72,10 @@ class AiClassification : AnAction() {
         }
 
         if (psiFile is PsiJavaFile) {
+            //take all methods from a class
             val methodDataList = collectMethodData(psiFile, document)
 
+            //display progress bar and performe classification
             ProgressManager.getInstance().run(object : Task.Modal(project, "Classifying...", true) {
                 override fun run(indicator: ProgressIndicator) {
                     indicator.text = "Preparing classification..."
@@ -80,6 +83,7 @@ class AiClassification : AnAction() {
 
                     for ((index, methodData) in methodDataList.withIndex()) {
                         if (indicator.isCanceled) return
+                        if(methodData.body.length === 0)continue
 
                         codesArray.add(methodData.text)
                         codesMethodNames.add(methodData.name)
@@ -100,10 +104,13 @@ class AiClassification : AnAction() {
 
                 override fun onSuccess() {
                     ApplicationManager.getApplication().invokeLater {
-                        val toolWindow = ToolWindowManager.getInstance(project).getToolWindow("PlugInWindow")
+                        //access the panel
+                        val toolWindow = ToolWindowManager.getInstance(project).getToolWindow("DetectiveWindow")
                         val content = toolWindow?.contentManager?.contents?.firstOrNull()
                         val panel = content?.component as? ClassificationResultPanel
 
+                        panel?.lastProcessedClassificationFile = file
+                        //put the start/end of lines in Item so it can be used later and other information
                         val displayResults = codesArray.indices.map { i ->
                             val startOffset = document.getLineStartOffset(codesArrayStartLocation[i] - 1)
                             val endOffset = document.getLineEndOffset(codesArrayEndLocation[i] - 1)
@@ -136,6 +143,7 @@ class AiClassification : AnAction() {
     }
 
     private fun collectMethodData(psiFile: PsiJavaFile, document: Document): List<MethodData> {
+        //mapping the method attributes to the class I made
         return ReadAction.compute<List<MethodData>, Throwable> {
             val methods = psiFile.classes.flatMap { it.methods.toList() }
             methods.map { method ->
@@ -143,8 +151,10 @@ class AiClassification : AnAction() {
                 val methodText = method.text
                 val startLine = document.getLineNumber(method.startOffset) + 1
                 val endLine = document.getLineNumber(method.endOffset) + 1
+                val bodyStatements = method.body?.statements
+                val bodyText = bodyStatements?.joinToString("\n") { it.text } ?: ""
 
-                MethodData(methodName, methodText, startLine, endLine)
+                MethodData(methodName, methodText, startLine, endLine,bodyText)
             }
         }
     }
@@ -152,7 +162,7 @@ class AiClassification : AnAction() {
 
 
 
-    private fun performAIClassification(code: String): ClassificationResult {
+     fun performAIClassification(code: String): ClassificationResult {
         val url = URL("http://localhost:5000/classify")
         val connection = url.openConnection() as HttpURLConnection
         connection.requestMethod = "POST"
@@ -164,18 +174,19 @@ class AiClassification : AnAction() {
         val jsonInputString = JSONObject().apply {
             put("text", code)
         }.toString()
-        println(jsonInputString)
-        try {
-            connection.outputStream.use { os ->
-                val input = jsonInputString.toByteArray(StandardCharsets.UTF_8)
-                os.write(input, 0, input.size)
-            }
 
+        try {
+            //opening an output stream and sending the text over it
+            connection.outputStream.use { outStream ->
+                val input = jsonInputString.toByteArray(StandardCharsets.UTF_8)
+                outStream.write(input, 0, input.size)
+            }
             val responseCode = connection.responseCode
             if (responseCode == HttpURLConnection.HTTP_OK) {
                 val response = connection.inputStream.bufferedReader().readText()
-                println("API Response: $response")
+                //println("API Response: $response")
 
+                //make the response json format again and take the info out of it
                 val jsonResponse = JSONObject(response)
                 val label = jsonResponse.getString("label")
                 val confidence = jsonResponse.getDouble("confidence")
@@ -185,11 +196,11 @@ class AiClassification : AnAction() {
 
                 val errorStream = connection.errorStream
                 val errorResponse = errorStream?.bufferedReader()?.readText() ?: "Unknown error"
-                println("Error response: $errorResponse")
+                //println("Error response: $errorResponse")
                 throw Exception("API error: $responseCode - $errorResponse")
             }
         } catch (e: Exception) {
-            println("Exception during API call: ${e.message}")
+            //println("Exception during API call: ${e.message}")
             throw e
         } finally {
             connection.disconnect()
@@ -198,7 +209,6 @@ class AiClassification : AnAction() {
 
     fun hasCodeErrors(project: Project, psiFile: PsiFile): Boolean {
         val document: Document? = PsiDocumentManager.getInstance(project).getDocument(psiFile)
-
         if (document != null) {
             PsiDocumentManager.getInstance(project).commitDocument(document)
         }
@@ -212,7 +222,8 @@ class AiClassification : AnAction() {
         val name: String,
         val text: String,
         val startLine: Int,
-        val endLine: Int
+        val endLine: Int,
+        val body: String
     )
 }
 data class ClassificationResult(

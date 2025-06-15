@@ -1,5 +1,4 @@
 package org.example.demo1.toolWindow
-
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
@@ -9,9 +8,14 @@ import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.editor.markup.RangeHighlighter
 import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.openapi.editor.ScrollType
+import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.fileEditor.FileEditorManagerListener
+import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
+import com.vladsch.flexmark.html.Disposable
 import java.awt.BorderLayout
 import java.awt.Color
 import javax.swing.DefaultListModel
@@ -22,7 +26,7 @@ import javax.swing.JList
 import java.awt.Component
 import kotlin.math.max
 
-class ClassificationResultPanel(val project: Project) : JPanel(BorderLayout()) {
+class ClassificationResultPanel(val project: Project) : JPanel(BorderLayout()), Disposable {
 
     private val listModel = DefaultListModel<ClassificationDisplayItem>()
     private val resultList = JBList(listModel)
@@ -35,15 +39,25 @@ class ClassificationResultPanel(val project: Project) : JPanel(BorderLayout()) {
     private var highlightDocument: com.intellij.openapi.editor.Document? = null
 
 
+    public var lastProcessedClassificationFile: VirtualFile? = null
+
+
     init {
-        println("initializare")
+
+
+        val connection = project.messageBus.connect()
+        //if the file is closed deselect item
+        connection.subscribe(FileEditorManagerListener.FILE_EDITOR_MANAGER, object : FileEditorManagerListener {
+            override fun fileClosed(source: FileEditorManager, file: VirtualFile) {
+                resultList.clearSelection()  // Deselect when the file is closed/switched
+            }
+        })
         resultList.selectionMode = ListSelectionModel.SINGLE_SELECTION
         resultList.addListSelectionListener { event ->
             if (!event.valueIsAdjusting) {
                 val selected = resultList.selectedValue ?: return@addListSelectionListener
                 val editor =
                     FileEditorManager.getInstance(project).selectedTextEditor ?: return@addListSelectionListener
-
                 highlightSelectedItem(editor, selected)
             }
         }
@@ -63,17 +77,15 @@ class ClassificationResultPanel(val project: Project) : JPanel(BorderLayout()) {
                 return component
             }
         }
+
         add(JBScrollPane(resultList), BorderLayout.CENTER)
     }
 
     fun updateResults(results: List<ClassificationDisplayItem>) {
-        println("Updating results with ${results.size} items")
-
         cleanupAllListeners()
         clearCurrentHighlight()
         listModel.clear()
 
-        // Add new results and set up listeners
         results.forEach { item ->
             listModel.addElement(item)
             setupItemListener(item)
@@ -81,18 +93,15 @@ class ClassificationResultPanel(val project: Project) : JPanel(BorderLayout()) {
     }
 
     /**
-     * Clears the current highlight and its associated listener.
+     * Clears the current highlight and its associated listener
      */
     private fun clearCurrentHighlight() {
-        println("Clearing current highlight")
-
         ApplicationManager.getApplication().runWriteAction {
             currentHighlighter?.let { highlighter ->
                 highlighter.dispose()
                 currentHighlighter = null
             }
         }
-
 
         highlightDocument?.let { doc ->
             currentHighlightListener?.let { listener ->
@@ -106,7 +115,7 @@ class ClassificationResultPanel(val project: Project) : JPanel(BorderLayout()) {
     }
 
     /**
-     * Removes the document listener for a specific item.
+     * Removes the document listener for a specific item
      */
     private fun removeItemListener(item: ClassificationDisplayItem) {
         itemListeners[item]?.let { (listener, document) ->
@@ -114,7 +123,6 @@ class ClassificationResultPanel(val project: Project) : JPanel(BorderLayout()) {
                 document.removeDocumentListener(listener)
             }
             itemListeners.remove(item)
-            println("Removed listener for item: ${item.methodName}")
         }
     }
 
@@ -122,8 +130,6 @@ class ClassificationResultPanel(val project: Project) : JPanel(BorderLayout()) {
      * Cleans up all item listeners.
      */
     private fun cleanupAllListeners() {
-        println("Cleaning up all listeners (${itemListeners.size} items)")
-
         ApplicationManager.getApplication().runWriteAction {
             itemListeners.values.forEach { (listener, document) ->
                 document.removeDocumentListener(listener)
@@ -133,15 +139,18 @@ class ClassificationResultPanel(val project: Project) : JPanel(BorderLayout()) {
         itemListeners.clear()
     }
 
-
     /**
-     * Call this method when the panel is being disposed to clean up resources.
+     * Call this method when the panel is being disposed to clean up resources
      */
+    override
     fun dispose() {
         cleanupAllListeners()
         clearCurrentHighlight()
     }
 
+    /**
+     * Assign the listener the task of checking if the method is changed and the invalidation of the list item
+     */
     private fun setupItemListener(item: ClassificationDisplayItem) {
         val editor = FileEditorManager.getInstance(project).selectedTextEditor ?: return
         val document = editor.document
@@ -152,17 +161,14 @@ class ClassificationResultPanel(val project: Project) : JPanel(BorderLayout()) {
             }
         }
 
-        // Store listener and its document
         itemListeners[item] = Pair(listener, document)
         document.addDocumentListener(listener)
-
-        println("Set up listener for item: ${item.methodName}")
     }
 
 
     /**
-     * Handles document changes for a specific item.
-     * Checks if the change affects the item's range and invalidates it if necessary.
+     * Handles document changes for a specific item
+     * Checks if the change affects the item's range and invalidates it if necessary
      */
     private fun handleItemDocumentChange(item: ClassificationDisplayItem, event: DocumentEvent) {
         val rangeMarker = item.rangeMarker ?: return
@@ -172,69 +178,69 @@ class ClassificationResultPanel(val project: Project) : JPanel(BorderLayout()) {
             return
         }
 
-        // Calculate the range affected by the change
+        // calculate the range affected by the change
         val changeStart = event.offset
         val changeEnd = changeStart + max(event.oldLength, event.newLength)
 
-        // Check if the change overlaps with our item's range
-        val affectsItem = changeStart <= rangeMarker.endOffset &&
-                changeEnd >= rangeMarker.startOffset
-
+        // check if the change overlaps with our item's range
+        val affectsItem = changeStart >= rangeMarker.startOffset &&
+                changeEnd <= rangeMarker.endOffset
         if (affectsItem) {
-            println("Document change affects item: ${item.methodName}")
             invalidateItem(item)
         }
+
     }
 
     /**
-     * Invalidates an item and cleans up its resources.
+     * Invalidates an item and cleans up its resources
      */
     private fun invalidateItem(item: ClassificationDisplayItem) {
-        println("Invalidating item: ${item.methodName}")
 
-        // Mark item as invalid
         item.valid = false
         item.rangeMarker = null
 
-        // If this item is currently highlighted, clear the highlight
         if (resultList.selectedValue == item) {
             clearCurrentHighlight()
         }
-
-        // Remove the item's listener
         removeItemListener(item)
-
-        // Update the UI
+        //update ui
         ApplicationManager.getApplication().invokeLater {
             resultList.repaint()
         }
 
     }
 
-
     private fun highlightSelectedItem(editor: Editor, item: ClassificationDisplayItem) {
-        println("Highlighting item: ${item.methodName}")
+        // Get the VirtualFile of the currently opened document
+        val currentFile = FileDocumentManager.getInstance().getFile(editor.document) ?: run {
+            Messages.showErrorDialog("No file associated with the editor.", "Highlight Error")
+            return
+        }
 
-        if (!item.valid) {
-            println("Item is invalid - skipping highlight")
+        // Check if the current file matches the classified file
+        if (currentFile != lastProcessedClassificationFile) {
+            Messages.showWarningDialog(
+                "The opened file is not the one that was classified. Highlighting disabled.",
+                "File Mismatch"
+            )
+            return
+        }
+
+        if (!item.valid) {//skip if invalid
             return
         }
 
         val rangeMarker = item.rangeMarker ?: return
-
-        // Clear any existing highlight
         clearCurrentHighlight()
 
-        // Create highlight attributes
         val textAttributes = TextAttributes().apply {
             backgroundColor = if (item.label == "Vulnerable") {
-                Color(240, 0, 0, 128) // Transparent red
+                Color(240, 0, 0, 128)
             } else {
-                Color(135, 255, 135, 128) // Transparent green
+                Color(135, 255, 135, 128)
             }
         }
 
-        // Apply highlight
         ApplicationManager.getApplication().runWriteAction {
             currentHighlighter = editor.markupModel.addRangeHighlighter(
                 rangeMarker.startOffset,
@@ -245,18 +251,17 @@ class ClassificationResultPanel(val project: Project) : JPanel(BorderLayout()) {
             )
         }
 
-        // Set up listener for the current highlight
         setupHighlightListener(editor, item)
 
-        // Move cursor and scroll to the highlighted area
+        // move the cursor to the method highlighted
         editor.caretModel.moveToOffset(rangeMarker.startOffset)
         editor.scrollingModel.scrollToCaret(ScrollType.CENTER)
     }
 
 
     /**
-     * Sets up a listener specifically for the currently highlighted item.
-     * This is separate from the item listeners and handles highlight-specific cleanup.
+     * Sets up a listener specifically for the currently highlighted item
+     * This is separate from the item listeners and handles highlight specific cleanup
      */
     private fun setupHighlightListener(editor: Editor, item: ClassificationDisplayItem) {
         currentHighlightListener = object : DocumentListener {
@@ -269,8 +274,6 @@ class ClassificationResultPanel(val project: Project) : JPanel(BorderLayout()) {
                         changeEnd >= rangeMarker.startOffset
 
                 if (!rangeMarker.isValid || affectsHighlight) {
-                    // The highlight will be cleared by the item listener
-                    // We just need to remove this highlight listener
                     clearCurrentHighlight()
                 }
             }
@@ -278,12 +281,8 @@ class ClassificationResultPanel(val project: Project) : JPanel(BorderLayout()) {
 
         highlightDocument = editor.document
         highlightDocument?.addDocumentListener(currentHighlightListener!!)
-
-        //editor.document.addDocumentListener(currentHighlightListener!!)
     }
-
 }
-
 
 data class ClassificationDisplayItem(
     val file: String,

@@ -10,6 +10,8 @@
     <!-- A displayed Vendor name or Organization ID displayed on the Plugins Page. -->
     <vendor email="support@yourcompany.com" url="https://www.yourcompany.com">YourCompany</vendor>
 
+
+
     <!-- Description of the plugin displayed on the Plugin Page and IDE Plugin Manager.
          Simple HTML elements (text formatting, paragraphs, and lists) can be added inside of <![CDATA[ ]]> tag.
          Guidelines: https://plugins.jetbrains.com/docs/marketplace/plugin-overview-page.html#plugin-description -->
@@ -24,30 +26,30 @@
     <depends>com.intellij.modules.lang</depends>
     <depends>com.intellij.modules.java</depends>
 
-
     <!-- Extension points defined by the plugin.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
 
     <extensions defaultExtensionNs="com.intellij">
-
         <toolWindow
                     factoryClass="org.example.demo1.toolWindow.PluginToolWindowFactory"
-                    id="PlugInWindow"
-                    anchor="left"
+                    id="DetectiveWindow"
+                    anchor="bottom"
                     secondary="false"
+                    icon="com.intellij.icons.ExpUiIcons.General.Show"
                      />
-
     </extensions>
+
     <actions>
-
-
         <action id="org.example.demo1.aiclassification.AiClassification"
-                class="org.example.demo1.aiclassification.AiClassification" text="Performe Classification">
+                class="org.example.demo1.aiclassification.AiClassification" text="Perform Classification"
+                icon="com.intellij.icons.ExpUiIcons.General.Show"
+        >
             <add-to-group group-id="ToolsMenu" anchor="last"/>
             <!-- Enable in editor popup (right-click menu) -->
-            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="EditorPopupMenu" anchor="last" />
 
         </action>
 
     </actions>
+
 </idea-plugin>

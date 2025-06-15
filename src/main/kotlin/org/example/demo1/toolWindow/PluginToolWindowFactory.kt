@@ -11,6 +11,7 @@ class PluginToolWindowFactory : ToolWindowFactory, DumbAware {
         val panel = ClassificationResultPanel(project)
         val contentFactory = ContentFactory.getInstance()
         val content = contentFactory.createContent(panel, "", false)
+
         toolWindow.contentManager.addContent(content)
     }
 
